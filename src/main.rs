@@ -1,12 +1,50 @@
-#![feature(proc_macro_hygiene, decl_macro)]
+#[macro_use]
+extern crate rocket;
 
-#[macro_use] extern crate rocket;
+mod paste_id;
+
+use paste_id::PasteId;
+use rocket::data::{Data, ToByteUnit};
+use rocket::http::uri::Absolute;
+use rocket::tokio::fs::File;
+
+const ID_LENGTH: usize = 6;
+const HOST: Absolute<'static> = uri!("http://localhost:8080");
+
+#[launch]
+fn rocket() -> _ {
+    rocket::build().mount("/", routes![index, retrieve, upload])
+}
 
 #[get("/")]
 fn index() -> &'static str {
-    "Choo Choo! Welcome to your Rocket server 🚅"
+    "
+    USAGE
+
+      POST /
+
+          accepts raw data in the body of the request and responds with a URL of
+          a page containing the body's content
+
+      GET /<id>
+
+          retrieves the content for the paste with id `<id>`
+    "
 }
 
-fn main() {
-    rocket::ignite().mount("/", routes![index]).launch();
+#[get("/<id>")]
+async fn retrieve(id: PasteId<'_>) -> Option<File> {
+    File::open(id.file_path()).await.ok()
+}
+
+#[post("/", data = "<paste>")]
+async fn upload(paste: Data<'_>) -> std::io::Result<String> {
+    let id = PasteId::new(ID_LENGTH);
+
+    paste
+        .open(128.kibibytes())
+        .into_file(id.file_path())
+        .await?;
+
+    Ok(uri!(HOST, retrieve(id)).to_string())
 }
